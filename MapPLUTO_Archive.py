@@ -108,7 +108,7 @@ try:
                                         os.path.join(m_bytes_prod_meta, 'PLUTOmeta.xml'))
 
     def replace_xml_content(input):
-        tree = ET.parse(os.path.join(m_bytes_prod_metate), input)
+        tree = ET.parse(os.path.join(m_bytes_prod_meta), input)
         root = tree.getroot()
         for item in root.iter("pubdate"):
             item.text = str(today)
