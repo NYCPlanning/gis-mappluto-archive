@@ -7,7 +7,7 @@ import os, re, xml.etree.ElementTree as ET, arcpy, shutil, zipfile, datetime, sy
 
 try:
     config = ConfigParser.ConfigParser()
-    config.read(r'G:\SCRIPTS\MapPLUTO_Archive\ini\MapPLUTO_config.ini')
+    config.read(r'MapPLUTO_config_sample.ini')
     log_path = config.get('PATHS', 'Log_Path')
     log = open(log_path, "a")
     StartTime = datetime.datetime.now().replace(microsecond=0)
