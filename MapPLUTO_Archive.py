@@ -1,7 +1,7 @@
 # Must be run with ArcPy Python27 32-bit version
 
 import os, re, xml.etree.ElementTree as ET, arcpy, shutil, zipfile, datetime, sys, traceback, ConfigParser
-
+from zipfile import ZipFile
 
 # Get user input on version number. --------------------------------------------------------------------
 
@@ -17,25 +17,26 @@ try:
     sde_prod_env = config.get('PATHS', 'PROD_SDE_Path')
     sde_arch_env = config.get('PATHS', 'Archive_SDE_Path')
     bytes_env = config.get('PATHS', 'Bytes_Path')
+    temp_env = config.get('PATHS', 'Temp_Path')
     m_path = config.get('PATHS', 'M_Path')
+    m_bldg_path = config.get('PATHS', 'M_Bldg_Path')
     m_arch_path = config.get('PATHS', 'M_Archive_Path')
-    x_path = config.get('PATHS', 'X_Path')
     today_dt = datetime.datetime.now()
     today = today_dt.strftime('%m_%d_%Y')
-    prod_version = '18v2_1'
-    prev_prod_version = '18v2'
+    prod_version = '20v2'
+    prev_prod_version = '20v1'
 
     # Check Bytes directory for version dir -------------------------------------------------------------
 
-    bytes_dirs = ['csv', 'fgdb', 'meta', 'Raw_data', 'shapefiles', 'web']
+    bytes_dirs = ['csv', 'fgdb', 'meta', 'raw_data', 'shapefiles', 'web']
 
     dir_list = []
 
-    for item in os.listdir(bytes_env):
+    for item in os.listdir(temp_env):
         dir_list.append(item)
         print(dir_list)
 
-    m_bytes_version_path = os.path.join(bytes_env, prod_version)
+    m_bytes_version_path = os.path.join(temp_env, prod_version)
 
     print("Checking if version directory needs to be generated.")
     if prod_version not in dir_list:
@@ -52,52 +53,101 @@ try:
         else:
             os.mkdir(os.path.join(m_bytes_version_path, subdir))
 
-    # Check MapPLUTO output location for fgdbs/shapefiles/original/etc -----------------------------------
+    # Check if archive directory exists in web dir
 
-    print("Parsing MapPLUTOCSV2FC output folder for appropriate version directory on X: drive")
-    output_list = os.listdir(x_path)
-
-    if prod_version in output_list:
-        x_src_path = os.path.join(x_path, prod_version)
-        x_output_path = os.path.join(x_path, prod_version, 'outputs')
+    if os.path.exists(os.path.join(m_bytes_version_path, 'web', 'archive')):
+        print("Archive folder already exists. Skipping generation")
     else:
-        print("No outputs for {} currently available. Aborting script".format(prod_version))
-        sys.exit()
+        os.mkdir(os.path.join(m_bytes_version_path, 'web', 'archive'))
 
-    # Export csv and zipped csv to Bytes Production -----------------------------------------------------
+    # Check if MapPLUTO raw_data location exists
 
-    if os.path.exists(x_src_path):
-        src_dir_list = os.listdir(x_src_path)
-        m_bytes_prod_csv = os.path.join(bytes_env, prod_version, 'csv')
-        for item in src_dir_list:
-            if 'pluto' in item and item.endswith('.csv'):
-                if os.path.exists(os.path.join(m_bytes_prod_csv, 'pluto_{}.csv'.format(prod_version))):
-                    print("Original PLUTO csv already exists in Bytes/{}/csv.".format(prod_version))
-                else:
-                    print("Original PLUTO csv does not exist in Bytes/{}/csv. Copying now.".format(prod_version))
-                    shutil.copyfile(os.path.join(x_src_path, item),
-                                    os.path.join(m_bytes_prod_csv,
-                                                 'pluto_{}.csv'.format(prod_version)))
-                    print("Copy of PLUTO csv complete.")
-                if os.path.exists(os.path.join(m_bytes_prod_csv, 'nyc_pluto_{}_csv.zip'.format(prod_version))):
-                    print("Zip of original PLUTO csv already exists in Bytes/{}/csv".format(prod_version))
-                else:
-                    print("Zip of original PLUTO csv does not exist in Bytes/{}/csv. Copying now.".format(prod_version))
-                    mp_src_zip = zipfile.ZipFile(os.path.join(m_bytes_prod_csv,
-                                                              'nyc_pluto_{}_csv.zip'.format(prod_version)), 'w')
-                    mp_src_zip.write(os.path.join(m_bytes_prod_csv, 'pluto_{}.csv'.format(prod_version)),
-                                     compress_type=zipfile.ZIP_DEFLATED)
-                    mp_src_zip.close()
+    if os.path.exists(os.path.join(m_bytes_version_path, 'raw_data')):
+        print('Raw data folder found')
+        raw_data_path = os.path.join(m_bytes_version_path, 'raw_data')
+    else:
+        print("No Raw data folder for found. Aborting script.".format(prod_version))
 
-    # Export metadata to BytesProduction directory using old MapPLUTO Production source and modifying certain desired
-    # xml fields.
+    # Check MapPLUTO raw_data location for csv and csv directory requisite files and move them -------------------------
 
+    m_bytes_prod_csv = os.path.join(m_bytes_version_path, 'csv')
+
+    desired_csv_files = ['pluto.csv', 'PLUTOChangeFile{}.csv'.format(prod_version)]
+
+    desired_pdf_csv_files = ['PLUTOChangeFileReadme{}.pdf'.format(prod_version),
+                         'PLUTODD{}.pdf'.format(prod_version),
+                         'PlutoReadme{}.pdf'.format(prod_version)]
+
+    print("Parsing raw data directory for CSV and PDF files")
+    for f in os.listdir(raw_data_path):
+        print(os.path.join(raw_data_path, f))
+        print(os.path.join(m_bytes_prod_csv, f))
+        if f in desired_csv_files:
+            if os.path.exists(os.path.join(m_bytes_prod_csv, f)):
+                print("{} already exists in output directory. Skipping".format(f))
+            else:
+                print("Raw csv file found. Moving to csv directory")
+                shutil.copyfile(os.path.join(raw_data_path, f),
+                                os.path.join(m_bytes_prod_csv, f))
+                if prod_version not in f:
+                    os.rename(os.path.join(m_bytes_prod_csv, f),
+                              os.path.join(m_bytes_prod_csv, '{}_{}.csv'.format(f.split('.')[0], prod_version)))
+        if f in desired_pdf_csv_files:
+            if os.path.exists(os.path.join(m_bytes_prod_csv, f)):
+                print("{} already exists in output directory. Skipping".format(f))
+            else:
+                print("PDF metadata files found. Moving to csv directory")
+                shutil.copyfile(os.path.join(raw_data_path, f),
+                                os.path.join(m_bytes_prod_csv, f))
+
+    # Zip csv files --------------------------------------------------------------------------------------------------
+
+    desired_csv_zip_files = [
+                             'pluto_{}.csv'.format(prod_version),
+                             'PLUTODD{}.pdf'.format(prod_version),
+                             'PlutoReadme{}.pdf'.format(prod_version),
+                             ]
+
+    desired_change_zip_files = ['PLUTOChangeFileReadme{}.pdf'.format(prod_version),
+                                'PLUTOChangeFile{}.csv'.format(prod_version)]
+
+    print("Creating csv zips")
+    pluto_csv_path = os.path.join(m_bytes_prod_csv, 'nyc_pluto_{}_csv.zip'.format(prod_version))
+    pluto_change_path = os.path.join(m_bytes_prod_csv, 'PLUTOChangeFile{}.zip'.format(prod_version))
+    pluto_csv_zip_path = zipfile.ZipFile(os.path.join(m_bytes_prod_csv, 'nyc_pluto_{}_csv.zip'.format(prod_version)), mode='w')
+    pluto_change_zip_path = zipfile.ZipFile(os.path.join(m_bytes_prod_csv, 'PLUTOChangeFile{}.zip'.format(prod_version)), mode='w')
+
+    if os.path.exists(pluto_csv_path):
+        print("Beginning to zip requisite csv directory files for csv path")
+        os.chdir(m_bytes_prod_csv)
+        for f in os.listdir(m_bytes_prod_csv):
+            if f in desired_csv_zip_files:
+                pluto_csv_zip_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+        pluto_csv_zip_path.close()
+        print("Zipping of csv requisite files complete.")
+    else:
+        print("Missing requisite zip file")
+
+    if os.path.exists(pluto_change_path):
+        print("Beginning to zip requisite csv directory files for change path")
+        os.chdir(m_bytes_prod_csv)
+        for f in os.listdir(m_bytes_prod_csv):
+            if f in desired_change_zip_files:
+                pluto_change_zip_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+        pluto_change_zip_path.close()
+        print("Zipping of csv change requisite files complete.")
+    else:
+        print("Missing requisite change zip file")
+
+
+    # Export metadata to BytesProduction directory using old MapPLUTO Production source -------------------------------
+    print("Beginning requisite metadata file copy")
     Arcdir = arcpy.GetInstallInfo("desktop")["InstallDir"]
     translator = Arcdir + "Metadata/Translator/ARCGIS2FGDC.xml"
 
     sde_prod_clip_meta = config.get('PATHS', 'MapPLUTO_SDE_Clipped_Path')
     sde_prod_unclip_meta = config.get('PATHS', 'MapPLUTO_SDE_Unclipped_Path')
-    m_bytes_prod_meta = os.path.join(bytes_env, prod_version, 'meta')
+    m_bytes_prod_meta = os.path.join(temp_env, prod_version, 'meta')
 
     if os.path.exists(os.path.join(m_bytes_prod_meta, 'PLUTOmeta.xml')):
         print("PLUTO meta already exists in BytesProduction. Skipping")
@@ -107,192 +157,239 @@ try:
                                         translator,
                                         os.path.join(m_bytes_prod_meta, 'PLUTOmeta.xml'))
 
+    if os.path.exists(os.path.join(m_bytes_prod_meta, 'PLUTOmeta_unclip.xml')):
+        print("PLUTO unclipped meta already exists in BytesProduction. Skipping")
+    else:
+        print("Exporting MapPLUTO unclipped metadata files to BytesProduction meta folder")
+        arcpy.ExportMetadata_conversion(sde_prod_unclip_meta,
+                                        translator,
+                                        os.path.join(m_bytes_prod_meta, 'PLUTOmeta_unclip.xml'))
+
+    # Modify existing xml fields to update metdata -------------------------------------------------------------------
+
+    print(m_bytes_prod_meta)
+
     def replace_xml_content(input):
-        tree = ET.parse(os.path.join(m_bytes_prod_meta), input)
+        print("Writing new metadata info to xml exports")
+        tree = ET.parse(os.path.join(m_bytes_prod_meta, input))
         root = tree.getroot()
+        print("Writing publication date to {}".format(tree))
         for item in root.iter("pubdate"):
             item.text = str(today)
+        print("Writing edition")
         for item in root.iter("edition"):
             item.text = str(prod_version)
+        print("Writing issue")
         for item in root.iter("issue"):
             item.text = "MapPLUTO {}".format(prod_version)
+        print("Writing title")
         for item in root.iter("title"):
             item.text = "New York City, MapPLUTO {}".format(prod_version)
+        print("Write dataset version")
         for item in root.getiterator():
             try:
                 item.text = item.text.replace(prev_prod_version, prod_version)
             except AttributeError:
                 pass
+        print("Overwriting initial output with in-memory modifications")
         tree.write(os.path.join(m_bytes_prod_meta, input))
+        print("Done")
 
-    if os.path.exists(os.path.join(m_bytes_prod_meta)):
+    if os.path.exists(os.path.join(m_bytes_prod_meta, 'PLUTOmeta.xml')):
         replace_xml_content("PLUTOmeta.xml")
 
     if os.path.exists(os.path.join(m_bytes_prod_meta, 'PLUTOmeta_unclip.xml')):
-        print("PLUTO unclipped meta already exists in BytesProduction. Skipping")
-    else:
-        print("Exporting MapPLUTO unclipped metadata files to BytesProduction meta folders")
         replace_xml_content("PLUTOmeta_unclip.xml")
 
-    # Export standard shapefiles to Bytes Production -----------------------------------
+    # Export metadata pdfs to shapefile directory ------------------------------------------------------------------
+    m_bytes_prod_shape = os.path.join(temp_env, prod_version, 'shapefiles')
 
-    arcpy.env.workspace = x_output_path
+    desired_csv_pdf_shp_files = ['PLUTODD{}.pdf'.format(prod_version),
+                                 'PlutoReadme{}.pdf'.format(prod_version),
+                                 'PLUTOChangeFileReadme{}.pdf'.format(prod_version),
+                                 'PLUTOChangeFile{}.csv'.format(prod_version)]
+
+    print("Exporting necessary metadata files to shapefile directory")
+    for f in os.listdir(raw_data_path):
+        if f in desired_csv_pdf_shp_files:
+            print(os.path.join(raw_data_path, f))
+            print(os.path.join(m_bytes_prod_shape, f))
+            shutil.copyfile(os.path.join(raw_data_path, f),
+                            os.path.join(m_bytes_prod_shape, f))
+
+    # Export standard shapefiles to Bytes Production ----------------------------------------------------------------
+
+    print("Setting environment workspace for shapefile export")
+    arcpy.env.workspace = raw_data_path
     output_gdb_list = arcpy.ListWorkspaces('*', 'FileGDB')
-    m_bytes_prod_shape = os.path.join(bytes_env, prod_version, 'shapefiles')
-
-    if os.path.exists(os.path.join(x_output_path, 'MapPLUTO_{}.gdb'.format(prod_version))) \
-            and os.path.exists(os.path.join(x_output_path, 'MapPLUTO_{}_unclipped.gdb'.format(prod_version))):
-        if os.path.exists(os.path.join(m_bytes_prod_shape, 'MAPPLUTO.SHP')) \
-                and os.path.exists(os.path.join(m_bytes_prod_shape, 'MAPPLUTO_UNCLIPPED.SHP')):
-            print("MapPLUTO Shapefile exports already exist in BytesProduction directory")
-        else:
+    print("Beginning shapefile export steps")
+    if os.path.exists(os.path.join(raw_data_path, 'MapPLUTO_{}_clipped.gdb'.format(prod_version))) \
+            and os.path.exists(os.path.join(raw_data_path, 'MapPLUTO_{}_unclipped.gdb'.format(prod_version))):
+        if not os.path.exists(os.path.join(m_bytes_prod_shape, 'MapPLUTO_UNCLIPPED.shp'.format(prod_version))):
             for fgdb in output_gdb_list:
-                gdb_env = os.path.join(x_output_path, fgdb)
-                arcpy.env.workspace = gdb_env
-                fgdb_avail = arcpy.ListFeatureClasses()
-                for item in fgdb_avail:
-                    if 'MapPLUTO' in item:
-                        print("Exporting MapPLUTO shapefiles to BytesProduction shapefile directory.")
-                        arcpy.FeatureClassToShapefile_conversion(os.path.join(x_output_path, fgdb, item),
-                                                                 os.path.join(m_bytes_prod_shape))
-                    else:
-                        print("The following is not an adequate shapefile for upload")
+                print("MapPLUTO unclipped Shapefile exports not found. Parsing for availability")
+                if 'unclipped' in fgdb:
+                    gdb_env = os.path.join(raw_data_path, fgdb)
+                    arcpy.env.workspace = gdb_env
+                    fgdb_avail = arcpy.ListFeatureClasses()
+                    arcpy.env.workspace = m_bytes_prod_shape
+                    arcpy.env.overwriteOutput = True
+                    for item in fgdb_avail:
+                            print("Exporting MapPLUTO unclipped shapefiles to BytesProduction shapefile directory.")
+                            arcpy.FeatureClassToFeatureClass_conversion(os.path.join(raw_data_path, fgdb, item),
+                                                                        m_bytes_prod_shape, 'MapPLUTO_UNCLIPPED')
+        if not os.path.exists(os.path.join(m_bytes_prod_shape, 'MapPLUTO.shp')):
+            for fgdb in output_gdb_list:
+                print("MapPLUTO clipped Shapefile exports not found. Parsing for availability")
+                if 'clipped' in fgdb:
+                    gdb_env = os.path.join(raw_data_path, fgdb)
+                    arcpy.env.workspace = gdb_env
+                    fgdb_avail = arcpy.ListFeatureClasses()
+                    arcpy.env.workspace = m_bytes_prod_shape
+                    arcpy.env.overwriteOutput = True
+                    for item in fgdb_avail:
+                            print("Exporting MapPLUTO clipped shapefile to BytesProduction shapefile directory")
+                            arcpy.FeatureClassToFeatureClass_conversion(os.path.join(raw_data_path, fgdb, item),
+                                                                        m_bytes_prod_shape, 'MapPLUTO')
+    else:
+        print("Missing one or both of the input feature classes. Aborting script")
+        sys.exit()
 
-    # Export zipped shapefiles to Bytes Production -----------------------------------
+    # Zip shapefile exports -------------------------------------------------------------------------------------------
 
-    shoreline_zip = zipfile.ZipFile(os.path.join(m_bytes_prod_shape,
-                                                         'nyc_mappluto_{}_shp.zip'.format(prod_version)), mode='w')
-    water_area_zip = zipfile.ZipFile(os.path.join(m_bytes_prod_shape,
-                                                  'nyc_mappluto_{}_unclipped_shp.zip'.format(prod_version)), mode='w')
+    print("Zipping shapefile exports")
+    m_bytes_prod_archive = os.path.join(m_bytes_version_path, 'web', 'archive')
 
-    # Define function for zipping requisite shapefile files --------------------------
+    shp_zip_path = zipfile.ZipFile(os.path.join(m_bytes_prod_shape, 'nyc_mappluto_{}_shp.zip'.format(prod_version)), mode='w')
+    shp_zip_unclipped_path = zipfile.ZipFile(os.path.join(m_bytes_prod_shape, 'nyc_mappluto_{}_unclipped_shp.zip'.format(prod_version)), mode='w')
+    shp_arc_zip_path = zipfile.ZipFile(os.path.join(m_bytes_prod_archive, 'nyc_mappluto_{}_arc_shp.zip'.format(prod_version)), mode='w')
+    shp_arc_zip_change_path = zipfile.ZipFile(os.path.join(m_bytes_prod_archive, 'nyc_mappluto_{}_arc_w_chg_shp.zip'.format(prod_version)), mode='w')
 
-    def zip_shapefiles(filename, zip_path):
-        for f in os.listdir(os.path.join(m_bytes_prod_shape)):
-            if "MapPLUTO_UNCLIPPED" not in f and not f.endswith(".xml"):
-                if f.endswith(".shp") or f.endswith(".SHP"):
-                    arcpy.ImportMetadata_conversion(os.path.join(m_bytes_prod_meta, "PLUTOmeta.xml"),
-                                                    "FROM_FGDC",
-                                                    os.path.join(m_bytes_prod_shape,
-                                                                 f.replace("_{}_{}".format(today, filename), "").upper()))
-        for f in os.listdir(os.path.join(m_bytes_prod_shape)):
-            if "MapPLUTO_UNCLIPPED" not in f:
-                if f.endswith(".xml") or f.endswith(".XML") or f.endswith(".lock"):
-                    print("Deleting {}".format(f))
-                    arcpy.Delete_management(f)
-                if f.endswith(("cpg", "dbf", "prj", "sbn", "sbx", "shp")):
-                    zip_path.write(os.path.join(m_bytes_prod_shape, f), f, compress_type=zipfile.ZIP_DEFLATED)
-        zip_path.close()
+    shp_zip_files = ['MapPLUTO', 'PLUTODD{}'.format(prod_version), 'PlutoReadme{}'.format(prod_version)]
+    shp_zip_unclipped_files = ['MapPLUTO_UNCLIPPED', 'PLUTODD{}'.format(prod_version), 'PlutoReadme{}'.format(prod_version)]
+    shp_arc_files = ['MapPLUTO', 'MapPLUTO_UNCLIPPED', 'PLUTODD{}'.format(prod_version), 'PlutoReadme{}'.format(prod_version)]
+    shp_arc_chg_files = ['MapPLUTO', 'MapPLUTO_UNCLIPPED', 'PLUTOChangeFile{}'.format(prod_version),
+                         'PLUTOChangeFileReadme{}'.format(prod_version), 'PLUTODD{}'.format(prod_version),
+                         'PlutoReadme{}'.format(prod_version)]
 
-    zip_shapefiles("Shoreline_ClippedProj", shoreline_zip)
-    zip_shapefiles("Water_IncludedProj", water_area_zip)
+    os.chdir(m_bytes_prod_shape)
+    for f in os.listdir(m_bytes_prod_shape):
+        if f.split('.')[0] in shp_arc_chg_files:
+            shp_arc_zip_change_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+            print("{} added to Change archive shapefile zip".format(f))
+        if f.split('.')[0] in shp_arc_files:
+            shp_arc_zip_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+            print("{} added to Archive shapefile zip".format(f))
+        if f.split('.')[0] in shp_zip_files:
+            shp_zip_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+            print("{} added to Clipped shapefile zip".format(f))
+        if f.split('.')[0] in shp_zip_unclipped_files:
+            shp_zip_unclipped_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+            print("{} added to Unclipped shapefile zip".format(f))
 
-    print("Shapefile export complete")
+    # Export metadata pdfs to fgdb directory ------------------------------------------------------------------
+    m_bytes_prod_fgdb = os.path.join(temp_env, prod_version, 'fgdb')
+
+    desired_csv_pdf_fgdb_files = ['PLUTODD{}.pdf'.format(prod_version),
+                                 'PlutoReadme{}.pdf'.format(prod_version),
+                                 'PLUTOChangeFileReadme{}.pdf'.format(prod_version),
+                                 'PLUTOChangeFile{}.csv'.format(prod_version)]
+
+    print("Exporting necessary metadata files to shapefile directory")
+    for f in os.listdir(raw_data_path):
+        if f in desired_csv_pdf_fgdb_files:
+            shutil.copyfile(os.path.join(raw_data_path, f),
+                            os.path.join(m_bytes_prod_fgdb, f))
 
     # Export fgdbs and zipped fgdbs to Bytes Production -----------------------------------
+    print("Beginning fgdb export")
+    m_bytes_prod_fgdb = os.path.join(temp_env, prod_version, 'fgdb')
 
-    m_bytes_prod_fgdb = os.path.join(bytes_env, prod_version, 'fgdb')
+    if os.path.exists(os.path.join(raw_data_path, 'MapPLUTO_{}_clipped.gdb'.format(prod_version))) \
+            and os.path.exists(os.path.join(raw_data_path, 'MapPLUTO_{}_unclipped.gdb'.format(prod_version))):
+        if not os.path.exists(os.path.join(m_bytes_prod_fgdb, 'MapPLUTO_{}.gdb'.format(prod_version))):
+            for fgdb in output_gdb_list:
+                print(fgdb)
+                if 'clipped' in fgdb:
+                    print("Copying clipped fgdb dataset")
+                    arcpy.Copy_management(fgdb, os.path.join(m_bytes_prod_fgdb, 'MapPLUTO_{}.gdb'.format(prod_version)))
+        if not os.path.exists(os.path.join(m_bytes_prod_fgdb, 'MapPLUTO_{}_unclipped.gdb'.format(prod_version))):
+            for fgdb in output_gdb_list:
+                print(fgdb)
+                if 'unclipped' in fgdb:
+                    print("Copying unclipped fgdb dataset")
+                    arcpy.Copy_management(fgdb, os.path.join(m_bytes_prod_fgdb, 'MapPLUTO_{}_unclipped.gdb'.format(prod_version)))
 
-    if os.path.join(x_output_path, 'MapPLUTO_WaterArea_{}.gdb'.format(today)) and \
-            os.path.join(x_output_path, 'MapPLUTO_ShorelineClip_{}.gdb'.format(today)) in output_gdb_list:
-        print("Exporting MapPLUTO GDBs to BytesProduction fgdb directory.")
-        for gdb in output_gdb_list:
-            if 'Water' in gdb:
+    # Zip fgdb exports ------------------------------------------------------------------------------------------------
 
-                # Export MapPLUTO Unclipped FGDB ---------------------------------------------------------
+    print("Zipping fgdb exports")
 
-                if os.path.exists(os.path.join(m_bytes_prod_fgdb,
-                                               'MapPLUTO_{}_unclipped.gdb'.format(prod_version))):
-                    print("MapPLUTO Unclipped fgdb already exported.")
-                else:
-                    print("MapPLUTO Unclipped is being copied to Bytes Production fgdb directory")
-                    shutil.copytree(os.path.join(x_output_path, gdb), os.path.join(m_bytes_prod_fgdb,
-                                                                           'MapPLUTO_{}_unclipped.gdb'.format(prod_version)))
-                    arcpy.ImportMetadata_conversion(os.path.join(m_bytes_prod_meta, 'PLUTOmeta_unclip.xml'),
-                                                    'FROM_FGDC', os.path.join(m_bytes_prod_fgdb,
-                                                                              'MapPLUTO_{}_unclipped.gdb'.format(prod_version),
-                                                                              'MapPLUTO_UNCLIPPED'.format(today)))
+    fgdb_zip_path = zipfile.ZipFile(os.path.join(m_bytes_prod_fgdb, 'nyc_mappluto_{}_fgdb.zip'.format(prod_version)),
+                                   mode='w')
+    fgdb_zip_unclipped_path = zipfile.ZipFile(
+        os.path.join(m_bytes_prod_fgdb, 'nyc_mappluto_{}_unclipped_fgdb.zip'.format(prod_version)), mode='w')
+    fgdb_arc_zip_path = zipfile.ZipFile(
+        os.path.join(m_bytes_prod_archive, 'nyc_mappluto_{}_arc_fgdb.zip'.format(prod_version)), mode='w')
+    fgdb_arc_zip_change_path = zipfile.ZipFile(
+        os.path.join(m_bytes_prod_archive, 'nyc_mappluto_{}_arc_w_chg_fgdb.zip'.format(prod_version)), mode='w')
 
-                # Export MapPLUTO Unclipped FGDB zips ------------------------------------------------------
+    fgdb_zip_files = ['MapPLUTO_{}'.format(prod_version), 'PLUTODD{}'.format(prod_version), 'PlutoReadme{}'.format(prod_version)]
 
-                if os.path.exists(os.path.join(m_bytes_prod_fgdb,
-                                               'nyc_mappluto_{}_unclipped_fgdb.zip'.format(prod_version))):
-                    print("MapPLUTO Unclipped fgdb zip already exported.")
-                else:
-                    mp_unclipped_zip = zipfile.ZipFile(os.path.join(m_bytes_prod_fgdb,
-                                                                'nyc_mappluto_{}_unclipped_fgdb.zip'.format(prod_version)), mode='w')
-                    try:
-                        print("Zipping MapPLUTO Unclipped for Bytes Production fgdb directory")
-                        for f in os.listdir(os.path.join(x_output_path, gdb)):
-                            mp_unclipped_zip.write(os.path.join(x_output_path, gdb, f),
-                                                   "MapPLUTO_{}_unclipped.gdb\\".format(prod_version) + f,
-                                                   compress_type=zipfile.ZIP_DEFLATED)
-                    finally:
-                        print("Zip of MapPLUTO Unclipped complete.")
-                        mp_unclipped_zip.close()
+    fgdb_zip_unclipped_files = ['MapPLUTO_{}_unclipped'.format(prod_version), 'PLUTODD{}'.format(prod_version),
+                               'PlutoReadme{}'.format(prod_version)]
 
-                print("MapPLUTO Unclipped copy complete.")
-            else:
-                # Export MapPLUTO Clipped FGDB --------------------------------------------------------------
+    fgdb_arc_files = ['MapPLUTO_{}'.format(prod_version), 'MapPLUTO_{}_unclipped'.format(prod_version),
+                     'PLUTODD{}'.format(prod_version), 'PlutoReadme{}'.format(prod_version)]
 
-                if os.path.exists(os.path.join(m_bytes_prod_fgdb,
-                                               'MapPLUTO_{}.gdb'.format(prod_version))):
-                    print("MapPLUTO clipped fgdb already exported")
-                else:
-                    print("MapPLUTO clipped is being copied to Bytes Production fgdb")
-                    arcpy.Copy_management(os.path.join(x_output_path, gdb), os.path.join(m_bytes_prod_fgdb,
-                                                                           'MapPLUTO_{}.gdb'.format(prod_version)))
-                    arcpy.ImportMetadata_conversion(
-                        os.path.join(bytes_env, prod_version, 'meta', 'PLUTOmeta.xml'),
-                        'FROM_FGDC', os.path.join(m_bytes_prod_fgdb,
-                                                  'MapPLUTO_{}.gdb'.format(prod_version),
-                                                  'MapPLUTO'.format(today)))
+    fgdb_arc_chg_files = ['MapPLUTO_{}'.format(prod_version), 'MapPLUTO_{}_unclipped'.format(prod_version),
+                         'PLUTOChangeFile{}'.format(prod_version), 'PLUTOChangeFileReadme{}'.format(prod_version),
+                         'PLUTODD{}'.format(prod_version), 'PlutoReadme{}'.format(prod_version)]
 
-                # Export MapPLUTO Clipped FGDB zips ---------------------------------------------------------
+    os.chdir(m_bytes_prod_fgdb)
+    for f in os.listdir(m_bytes_prod_fgdb):
+        if f.split('.')[0] in fgdb_arc_chg_files:
+            fgdb_arc_zip_change_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+            print("{} added to Change archive shapefile zip".format(f))
+        if f.split('.')[0] in fgdb_arc_files:
+            fgdb_arc_zip_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+            print("{} added to Archive shapefile zip".format(f))
+        if f.split('.')[0] in fgdb_zip_files:
+            fgdb_zip_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+            print("{} added to Clipped shapefile zip".format(f))
+        if f.split('.')[0] in fgdb_zip_unclipped_files:
+            fgdb_zip_unclipped_path.write(f, compress_type=zipfile.ZIP_DEFLATED)
+            print("{} added to Unclipped shapefile zip".format(f))
+    print("Zipping complete")
 
-                if os.path.exists(os.path.join(m_bytes_prod_fgdb,
-                                               'nyc_mappluto_{}_fgdb.zip')):
-                    print("MapPLUTO clipped fgdb zip already exported")
-                else:
-                    mp_clipped_zip = zipfile.ZipFile(os.path.join(m_bytes_prod_fgdb,
-                                                              'nyc_mappluto_{}_fgdb.zip'.format(prod_version)), mode='w')
-                    try:
-                        print("Zipping MapPLUTO Clipped for Bytes Production fgdb directory")
-                        for f in os.listdir(os.path.join(x_output_path, gdb)):
-                            mp_clipped_zip.write(os.path.join(x_output_path, gdb, f),
-                                                 "MapPLUTO_{}.gdb\\".format(prod_version) + f,
-                                                 compress_type= zipfile.ZIP_DEFLATED)
-                    finally:
-                        print("Zip of MapPLUTO Clipped complete.")
-                        mp_clipped_zip.close()
+    # Export all zips to web directory
+    print("Copying all zips to web directory")
+    m_bytes_prod_web = os.path.join(temp_env, prod_version, 'web')
 
-                print("MapPLUTO clipped copy complete.")
-    else:
-        print("The MapPLUTO output directory on the X: drive is lacking one or both of the required GDBs")
+    for dir in bytes_dirs:
+        if dir is not 'web':
+            zip_folder_path = os.path.join(temp_env, prod_version, dir)
+            for f in os.listdir(zip_folder_path):
+                if f.endswith('.zip'):
+                    shutil.copy(os.path.join(zip_folder_path, f),
+                                os.path.join(m_bytes_prod_web, f))
+    print("All zips are now available in web folder")
 
-    # Export zips to Bytes Production web directory
-
-    for item in os.listdir(m_bytes_version_path):
-        if item.endswith('') and 'web' not in item:
-            sub_dir_path = os.path.join(m_bytes_version_path, item)
-            for item2 in os.listdir(sub_dir_path):
-                if item2.endswith('.zip'):
-                    shutil.copy2(os.path.join(sub_dir_path, item2), os.path.join(bytes_env, prod_version, 'web'))
-        if item.endswith('.zip'):
-            shutil.copy2(os.path.join(bytes_env, item), os.path.join(bytes_env, prod_version, 'web'))
+    # Disconnect users from Production SDE to prohibit any schema locks if necessary
+    arcpy.AcceptConnections(sde_prod_env, False)
+    arcpy.DisconnectUser(sde_prod_env, "ALL")
 
     '''
     Export all necessary files from Bytes web directory to Production, Archive, and M: drive
     '''
 
     # Assign item list variable holding bytes files.
-    bytes_dir_list = os.listdir(bytes_env)
+    bytes_dir_list = os.listdir(temp_env)
 
     # Loop through MapPLUTO Bytes Production directories for those that match current production version.
 
     for item in bytes_dir_list:
         if prod_version == item or prod_version.upper() == item:
-            bytes_file_path = os.path.join(bytes_env, item)
+            bytes_file_path = os.path.join(temp_env, item)
 
     # Assign item list variable holding versioned bytes files. --------------------------------------------
 
@@ -301,7 +398,7 @@ try:
     # Assign path to Feature Classes in appropriate bytes directory. --------------------------------------
 
     for item in bytes_file_list:
-        if item == "fgdb":
+        if item == "raw_data":
             bytes_features_path = os.path.join(bytes_file_path, item)
     print("Grabbing feature classes from the following path to push to Production SDE:")
     print(bytes_features_path)
@@ -342,13 +439,13 @@ try:
 
     print("Copying newest FCs from BytesProduction to SDE PROD.")
     print("Copying {0} as {1}".format(os.path.join(bytes_mp_path, bytes_mp_file),
-                                      os.path.join(sde_prod_env, bytes_mp_file)))
+                                      os.path.join(sde_prod_env, 'MapPLUTO')))
     arcpy.Copy_management(os.path.join(bytes_mp_path, bytes_mp_file),
-                          os.path.join(sde_prod_env, bytes_mp_file))
+                          os.path.join(sde_prod_env, 'MapPLUTO'))
     print("Copying {0} as {1}".format(os.path.join(bytes_mp_unclipped_path, bytes_mp_unclipped_file),
-                                      os.path.join(sde_prod_env, bytes_mp_unclipped_file)))
+                                      os.path.join(sde_prod_env, 'MapPLUTO_UNCLIPPED')))
     arcpy.Copy_management(os.path.join(bytes_mp_unclipped_path, bytes_mp_unclipped_file),
-                          os.path.join(sde_prod_env, bytes_mp_unclipped_file))
+                          os.path.join(sde_prod_env, 'MapPLUTO_UNCLIPPED'))
     print("Copying complete.")
 
     # Check archive SDE to make sure this version has not already been archived. --------------------------------
@@ -356,25 +453,23 @@ try:
 
     arcpy.env.workspace = sde_arch_env
 
-    if arcpy.Exists(os.path.join(sde_arch_env, "MAPPLUTO_" + prod_version)) or arcpy.Exists(os.path.join(sde_arch_env, "MAPPLUTO_" + prod_version + "_UNCLIPPED")):
-        print("The desired version already exists in Archive SDE. Skipping this step")
+    if arcpy.Exists(os.path.join(sde_arch_env, "MAPPLUTO_" + prod_version)):
+        print("MapPLUTO {} clipped is already available in Archive SDE. Skipping archival of this dataset".format(prod_version))
     else:
-        print("Copying version {} to Archive SDE".format(prod_version))
-        print("Copying {0} as {1}".format(os.path.join(bytes_mp_path, bytes_mp_file),
-                                          os.path.join(sde_arch_env, bytes_mp_file.upper() + "_" + prod_version)))
-        arcpy.Copy_management(os.path.join(bytes_mp_path, bytes_mp_file),
-                              os.path.join(sde_arch_env, bytes_mp_file.upper() + "_" + prod_version))
-        print("Copying {0} as {1}".format(os.path.join(bytes_mp_unclipped_path, bytes_mp_unclipped_file),
-                                          os.path.join(sde_arch_env,
-                                                       bytes_mp_unclipped_file.upper().replace("UNCLIPPED",
-                                                                                               prod_version +
-                                                                                               "_UNCLIPPED"))))
-        arcpy.Copy_management(os.path.join(bytes_mp_unclipped_path, bytes_mp_unclipped_file),
-                              os.path.join(sde_arch_env,
-                                           bytes_mp_unclipped_file.upper().replace("UNCLIPPED",
-                                                                                   prod_version + "_UNCLIPPED")))
-        print("Copying complete.")
+        print("Copying {0} as {1}".format(os.path.join(sde_prod_env, 'MapPLUTO'),
+                                          os.path.join(sde_arch_env, 'MapPLUTO_{}'.format(prod_version))))
+        arcpy.Copy_management(os.path.join(sde_prod_env, 'MapPLUTO'),
+                              os.path.join(sde_arch_env, 'MapPLUTO_{}'.format(prod_version)))
 
+    if arcpy.Exists(os.path.join(sde_arch_env, "MAPPLUTO_" + prod_version + "_UNCLIPPED")):
+        print("MapPLUTO {} unclipped is already available in Archive SDE. Skipping archival of this dataset".format(prod_version))
+    else:
+        print("Copying {0} as {1}".format(os.path.join(sde_prod_env, 'MapPLUTO_UNCLIPPED'),
+                                          os.path.join(sde_arch_env,
+                                                       'MapPLUTO_UNCLIPPED_{}'.format(prod_version))))
+        arcpy.Copy_management(os.path.join(sde_prod_env, 'MapPLUTO_UNCLIPPED'),
+                              os.path.join(sde_arch_env, 'MapPLUTO_UNCLIPPED_{}'.format(prod_version)))
+    print("Copying complete.")
 
     # Delete MapPLUTO PREV VERSION from sde production since it has been archived in SDE Archive or already existed on SDE
 
@@ -391,9 +486,10 @@ try:
     arcpy.env.workspace = sde_prod_env
     print("Connection to production SDE complete.")
 
-    all_boro_list = ["(Shoreline Clipped).lyr", "(Water Included).lyr", "BBL only (Shoreline Clipped).lyr",
-                     "BBL only (Water Included).lyr", "Land Use (Shoreline Clipped).lyr", "Land Use (Water Included).lyr",
-                     "Land Use Plus (Shoreline Clipped).lyr", "Land Use Plus (Water Included).lyr"]
+    all_boro_list = ["(Shoreline Clipped).lyr", "(Water Areas Included).lyr", "BBL only (Shoreline Clipped).lyr",
+                     "BBL only (Water Areas Included).lyr", "Land Use (Shoreline Clipped).lyr",
+                     "Land Use (Water Areas Included).lyr", "Land Use Plus (Shoreline Clipped).lyr",
+                     "Land Use Plus (Water Areas Included).lyr"]
 
     arcpy.env.overwriteOutput = True
 
@@ -402,67 +498,109 @@ try:
     for item in all_boro_list:
         if "Shoreline" in item:
             print("Exporting Clipped xml file to M:/GIS/DATA/MapPLUTO")
-            arcpy.ExportMetadata_conversion("MapPLUTO", translator, os.path.join(m_path, "MapPLUTO-" + item + ".xml"))
+            arcpy.ExportMetadata_conversion("MapPLUTO", translator, os.path.join(m_path, "MapPLUTO " + item + ".xml"))
+            print("Exporting Clipped xml file to M:/GIS/DATA/Building and Lots/MapPLUTO")
+            arcpy.ExportMetadata_conversion("MapPLUTO", translator, os.path.join(m_bldg_path, "MapPLUTO" + item + ".xml"))
 
         elif "Water" in item:
             print("Exporting Unclipped xml file to M:/GIS/DATA/MapPLUTO")
-            arcpy.ExportMetadata_conversion("MapPLUTO_UNCLIPPED", translator, os.path.join(m_path, "MapPLUTO-" + item +
+            arcpy.ExportMetadata_conversion("MapPLUTO_UNCLIPPED", translator, os.path.join(m_path, "MapPLUTO " + item +
+                                                                                           ".xml"))
+            print("Exporting Unclipped xml file to M:/GIS/DATA/Building and Lots/MapPLUTO")
+            arcpy.ExportMetadata_conversion("MapPLUTO_UNCLIPPED", translator, os.path.join(m_bldg_path, "MapPLUTO" + item +
                                                                                            ".xml"))
 
     # For each of the newly exported xml files, add the custom sentence describing the layer. ------------------------
 
     # Define function for updating metadata xml files with customized descriptive summary sentences
 
-    def update_layer_xmls(layer_name, custom_text):
+    def update_layer_xmls(directory_path, layer_name, custom_text):
         print("Modifying metadata for {}".format(layer_name))
-        tree = ET.parse(os.path.join(m_path, "MapPLUTO-" + item + ".xml"))
+        tree = ET.parse(os.path.join(directory_path, "MapPLUTO " + item + ".xml"))
         root = tree.getroot()
         for summary_text in root.iter("purpose"):
             print(summary_text.text)
             summary_text.text = summary_text.text + "\n\n" + custom_text
-        tree.write(os.path.join(m_path, "MapPLUTO-" + item + ".xml"))
+        tree.write(os.path.join(directory_path, "MapPLUTO " + item + ".xml"))
 
     for item in all_boro_list:
-        if item == "MapPLUTO-(Shoreline Clipped).lyr":
-            update_layer_xmls("MapPLUTO Shoreline Clipped", "Shoreline clipped version does not contain lots " \
+        # Update layers/xmls for M MapPLUTO path
+        if item == "MapPLUTO (Shoreline Clipped).lyr":
+            update_layer_xmls(m_path, "MapPLUTO Shoreline Clipped", "Shoreline clipped version does not contain lots " \
                                                     "completely or partially underwater.")
 
-        elif item == "MapPLUTO-(Water Included).lyr":
-            update_layer_xmls("MapPLUTO Water Included", "Layer: Water included version contains lots completely and " \
+        elif item == "MapPLUTO (Water Included).lyr":
+            update_layer_xmls(m_path, "MapPLUTO Water Included", "Layer: Water included version contains lots completely and " \
                                                     "partially underwater.")
         elif "BBL" in item and "Shoreline" in item:
-            update_layer_xmls("MapPLUTO BBL Only Shoreline Clipped", "Layer: BBL only version contains only the BBL field " \
+            update_layer_xmls(m_path, "MapPLUTO BBL Only Shoreline Clipped", "Layer: BBL only version contains only the BBL field " \
                                                     "with no other attributes. Shoreline clipped version does not contain " \
                                                     "lots completely or partially underwater.")
         elif "BBL" in item and "Water" in item:
-            update_layer_xmls("MapPLUTO BBL Only Water Included", "Layer: Water included version contains lots completely " \
+            update_layer_xmls(m_path, "MapPLUTO BBL Only Water Included", "Layer: Water included version contains lots completely " \
                                                     "and partially underwater.")
         elif "Plus" in item and "Shoreline" in item:
-            update_layer_xmls("MapPLUTO Land Use Plus Shoreline Clipped", "Layer: Land Use Plus version symbolizes data " \
+            update_layer_xmls(m_path, "MapPLUTO Land Use Plus Shoreline Clipped", "Layer: Land Use Plus version symbolizes data " \
                                                     "based on a combination of Land Use and Building Class categories " \
                                                     "(more granular than Land Use version). Shoreline clipped version " \
                                                     "does not contain lots completely or partially underwater.")
         elif "Plus" in item and "Water" in item:
-            update_layer_xmls("MapPLUTO Land Use Plus Water Included", "Layer: Land Use Plus version symbolizes data " \
+            update_layer_xmls(m_path, "MapPLUTO Land Use Plus Water Included", "Layer: Land Use Plus version symbolizes data " \
                                                     "based on a combination of Land Use and Building Class categories " \
                                                     "(more granular than Land Use version). Water included version " \
                                                     "contains lots completely and partially underwater.")
         elif "Land Use (Shoreline Clipped)" in item:
-            update_layer_xmls("MapPLUTO Land Use Shoreline Clipped", "Layer: Land Use version symbolizes data based" \
+            update_layer_xmls(m_path, "MapPLUTO Land Use Shoreline Clipped", "Layer: Land Use version symbolizes data based" \
                                                     "on DCP standard Land Use colors. Shoreline clipped version does " \
                                                     "not contain lots completely or partially underwater.")
         elif "Land Use (Water Included)" in item:
-            update_layer_xmls("MapPLUTO Land Use Water Included", "Layer: Land Use version symbolizes data based on " \
+            update_layer_xmls(m_path, "MapPLUTO Land Use Water Included", "Layer: Land Use version symbolizes data based on " \
                                                     "DCP standard Land Use colors. Water included version contains " \
                                                     "lots completely and partially underwater.")
 
-    # Move README and Data Dictionary to M:/GIS/DATA/MAPPLUTO from BytesProduction --------------------------
+        # Update layers/xmls for M Bldg Lots MapPLUTO path
 
-    for item in os.listdir(os.path.join(bytes_env, prod_version, "web")):
+        if item == "MapPLUTO (Shoreline Clipped).lyr":
+            update_layer_xmls(m_bldg_path, "MapPLUTO Shoreline Clipped", "Shoreline clipped version does not contain lots " \
+                                                    "completely or partially underwater.")
+
+        elif item == "MapPLUTO (Water Included).lyr":
+            update_layer_xmls(m_bldg_path, "MapPLUTO Water Included", "Layer: Water included version contains lots completely and " \
+                                                    "partially underwater.")
+        elif "BBL" in item and "Shoreline" in item:
+            update_layer_xmls(m_bldg_path, "MapPLUTO BBL Only Shoreline Clipped", "Layer: BBL only version contains only the BBL field " \
+                                                    "with no other attributes. Shoreline clipped version does not contain " \
+                                                    "lots completely or partially underwater.")
+        elif "BBL" in item and "Water" in item:
+            update_layer_xmls(m_bldg_path, "MapPLUTO BBL Only Water Included", "Layer: Water included version contains lots completely " \
+                                                    "and partially underwater.")
+        elif "Plus" in item and "Shoreline" in item:
+            update_layer_xmls(m_bldg_path, "MapPLUTO Land Use Plus Shoreline Clipped", "Layer: Land Use Plus version symbolizes data " \
+                                                    "based on a combination of Land Use and Building Class categories " \
+                                                    "(more granular than Land Use version). Shoreline clipped version " \
+                                                    "does not contain lots completely or partially underwater.")
+        elif "Plus" in item and "Water" in item:
+            update_layer_xmls(m_bldg_path, "MapPLUTO Land Use Plus Water Included", "Layer: Land Use Plus version symbolizes data " \
+                                                    "based on a combination of Land Use and Building Class categories " \
+                                                    "(more granular than Land Use version). Water included version " \
+                                                    "contains lots completely and partially underwater.")
+        elif "Land Use (Shoreline Clipped)" in item:
+            update_layer_xmls(m_bldg_path, "MapPLUTO Land Use Shoreline Clipped", "Layer: Land Use version symbolizes data based" \
+                                                    "on DCP standard Land Use colors. Shoreline clipped version does " \
+                                                    "not contain lots completely or partially underwater.")
+        elif "Land Use (Water Included)" in item:
+            update_layer_xmls(m_bldg_path, "MapPLUTO Land Use Water Included", "Layer: Land Use version symbolizes data based on " \
+                                                    "DCP standard Land Use colors. Water included version contains " \
+                                                    "lots completely and partially underwater.")
+
+
+    # Move README and Data Dictionary to M MapPLUTO path from BytesProduction --------------------------
+
+    for item in os.listdir(os.path.join(temp_env, prod_version, "web")):
         if item.endswith("pdf") and item.startswith("PLUTO"):
-            print("Copying {0} to {1}".format(os.path.join(bytes_env, prod_version, "web", item),
+            print("Copying {0} to {1}".format(os.path.join(temp_env, prod_version, "web", item),
                                               os.path.join(m_path, item)))
-            shutil.copyfile(os.path.join(bytes_env, prod_version, "web", item), os.path.join(m_path, item))
+            shutil.copyfile(os.path.join(temp_env, prod_version, "web", item), os.path.join(m_path, item))
             print("Copying of file complete.")
         else:
             print("No available Data Dictionaries or User Guides to be pushed to M: drive MapPLUTO folders")
@@ -477,14 +615,14 @@ try:
 
     # Define function for assigning appropriate metadata information for various layer summaries
 
-    def generate_layer_summaries(input, summary_text):
+    def generate_layer_summaries(directory_path, input, summary_text):
         print('Generating xmls for {}'.format(lyr_item))
-        arcpy.ExportMetadata_conversion(input, translator, os.path.join(m_path, file_item, lyr_item + ".xml"))
-        tree = ET.parse(os.path.join(m_path, file_item, lyr_item + ".xml"))
+        arcpy.ExportMetadata_conversion(input, translator, os.path.join(directory_path, file_item, lyr_item + ".xml"))
+        tree = ET.parse(os.path.join(directory_path, file_item, lyr_item + ".xml"))
         root = tree.getroot()
         for summary_item in root.iter("purpose"):
             summary_item.text = summary_item.text + "\n\n" + "Layer: {} Lots. {}".format(file_item, summary_text)
-        tree.write(os.path.join(m_path, file_item, lyr_item + ".xml"))
+        tree.write(os.path.join(directory_path, file_item, lyr_item + ".xml"))
 
     # Define xml summary texts
 
@@ -497,30 +635,48 @@ try:
 
     # Assign varying layer summary metadata information
 
+    # Assigned for M MapPLUTO path
     for file_item in os.listdir(m_path):
         if file_item in boroughs:
             print("Generating xml files for {0} in {1}/{0}".format(file_item, m_path))
             borough_layers = [borough for borough in os.listdir(os.path.join(m_path, file_item)) if borough.endswith("lyr")]
             for lyr_item in borough_layers:
                 if "BBL only" not in lyr_item and "Water" not in lyr_item:
-                    generate_layer_summaries("MapPLUTO", Default_Clipped_Summary)
+                    generate_layer_summaries(m_path, "MapPLUTO", Default_Clipped_Summary)
                 elif "BBL only" not in lyr_item and "Shoreline" not in lyr_item:
-                    generate_layer_summaries("MapPLUTO_UNCLIPPED", Default_NonClipped_Summary)
+                    generate_layer_summaries(m_path, "MapPLUTO_UNCLIPPED", Default_NonClipped_Summary)
                 elif "BBL only" in lyr_item and "Water" not in lyr_item:
-                    generate_layer_summaries("MapPLUTO", BBL_Clipped_Summary)
+                    generate_layer_summaries(m_path, "MapPLUTO", BBL_Clipped_Summary)
                 elif "BBL only" in lyr_item and "Shoreline" not in lyr_item:
-                    generate_layer_summaries("MapPLUTO_UNCLIPPED", BBL_NonClipped_Summary)
+                    generate_layer_summaries(m_path, "MapPLUTO_UNCLIPPED", BBL_NonClipped_Summary)
+
+    # Assigned for M Bldg and Lots MapPLUTO path
+
+    for file_item in os.listdir(m_bldg_path):
+        if file_item in boroughs:
+            print("Generating xml files for {0} in {1}/{0}".format(file_item, m_bldg_path))
+            borough_layers = [borough for borough in os.listdir(os.path.join(m_bldg_path, file_item)) if borough.endswith("lyr")]
+            for lyr_item in borough_layers:
+                if "BBL only" not in lyr_item and "Water" not in lyr_item:
+                    generate_layer_summaries(m_bldg_path, "MapPLUTO", Default_Clipped_Summary)
+                elif "BBL only" not in lyr_item and "Shoreline" not in lyr_item:
+                    generate_layer_summaries(m_bldg_path, "MapPLUTO_UNCLIPPED", Default_NonClipped_Summary)
+                elif "BBL only" in lyr_item and "Water" not in lyr_item:
+                    generate_layer_summaries(m_bldg_path, "MapPLUTO", BBL_Clipped_Summary)
+                elif "BBL only" in lyr_item and "Shoreline" not in lyr_item:
+                    generate_layer_summaries(m_bldg_path, "MapPLUTO_UNCLIPPED", BBL_NonClipped_Summary)
+
 
     # Get MapPLUTO release date from previous xml export for Archive directory.
 
-    tree = ET.parse(os.path.join(m_path, "MapPLUTO-(Shoreline Clipped).lyr.xml"))
+    tree = ET.parse(os.path.join(m_path, "MapPLUTO (Shoreline Clipped).lyr.xml"))
     root = tree.getroot()
 
     for pub_date in root.iter("pubdate"):
         print(pub_date.text[:11])
         release_date = pub_date.text[:11]
 
-    release_date = datetime.strptime(release_date, "%Y%m%d")
+    release_date = datetime.datetime.strptime(release_date, "%Y%m%d")
     release_date_text = "(" + release_date.strftime("%b") + " " + str(release_date.year) + ")"
 
     # Archive Prod SDE as layers in M:GIS/DATA/Archive/MapPLUTO ----------------------------------------------------
@@ -537,54 +693,59 @@ try:
         arcpy.MakeFeatureLayer_management(input, input + prod_version + clip_val)
         print("Saving layer to appropriate path.")
         arcpy.SaveToLayerFile_management(input + prod_version + clip_val, os.path.join(m_arch_path,
-                                                                                       input + prod_version + " " +
+                                                                                       input.replace("_UNLCIPPED", "")  + " " + prod_version + " " +
                                                                                        release_date_text + " - {}".format(clip_text)))
         print("Exporting metadata xmls to appropriate path")
         arcpy.ExportMetadata_conversion(input, translator, os.path.join(m_arch_path,
-                                                                        input + prod_version + " " + release_date_text
+                                                                        input.replace("_UNLCIPPED", "") + " " + prod_version + " " + release_date_text
                                                                          + " - {}.lyr.xml".format(clip_text)))
         print("Applying appropriate symbology from previous export")
         arcpy.ApplySymbologyFromLayer_management(os.path.join(m_arch_path,
-                                                              input + prod_version + " " + release_date_text
-                                                              + " - {}.lyr".format(clip_text), layer_symb_path))
+                                                              input.replace("_UNLCIPPED", "") + " " + prod_version + " " + release_date_text
+                                                              + " - {}.lyr".format(clip_text)), layer_symb_path)
 
     layer_meta_archive("MapPLUTO", "Shoreline", "Shoreline Clipped")
     layer_meta_archive("MapPLUTO_UNCLIPPED", "Water", "Water Included")
 
-    # Export CARTO version shapefiles to Bytes Production -----------------------------------------------------------
+    '''
+    Below section was previously used for exporting CARTO version of MapPLUTO for Labs / DE. This step has been replaced with
+    a stand-alone script. Leaving commented for now and can remove in the future if no longer desired. - AF 
+    '''
 
-    m_bytes_prod_carto = os.path.join(m_bytes_version_path, 'carto')
-
-    if os.path.isdir(m_bytes_prod_carto):
-        print("CARTO directory in BytesProduction already exists. Skipping directory generation step.")
-    else:
-        os.mkdir(m_bytes_prod_carto)
-
-    for f in os.listdir(m_bytes_prod_shape):
-        # Copying MapPLUTO Clipped to CARTO Directory
-        if "MapPLUTO" in f and "_" not in f and ".zip" not in f:
-            print("Copying {} to {}".format(os.path.join(m_bytes_prod_shape, f), os.path.join(m_bytes_prod_carto, f)))
-            shutil.copyfile(os.path.join(m_bytes_prod_shape, f),
-                                 os.path.join(m_bytes_prod_carto, f[:8] + "_{}".format(prod_version) + f[8:]))
-            print("{} copied.".format(f))
-
-    for f in os.listdir(m_bytes_prod_carto):
-        if '.shp' in f and 'xml' not in f:
-            print("Adding spatial index to CARTO version of MapPLUTO data set.")
-            arcpy.AddSpatialIndex_management(os.path.join(m_bytes_prod_carto, f))
-            print("Spatial index added to CARTO version of MapPLUTO data set.")
-            print("Repairing geometry of CARTO version of MapPLUTO data set.")
-            arcpy.RepairGeometry_management(os.path.join(m_bytes_prod_carto, f))
-            print("Geometry repaired for CARTO version of MapPLUTO data set.")
-
-    carto_zip = zipfile.ZipFile(os.path.join(m_bytes_prod_carto, 'MapPLUTO_{}.zip'.format(prod_version)), 'w')
-
-    for f in os.listdir(m_bytes_prod_carto):
-        if ".zip" not in f:
-            print("Zipping {}".format(os.path.join(m_bytes_prod_carto, f)))
-            carto_zip.write(os.path.join(m_bytes_prod_carto, f), f, compress_type=zipfile.ZIP_DEFLATED)
-            print("{} added to zip directory.".format(os.path.join(m_bytes_prod_carto, f)))
-    carto_zip.close()
+    # # Export CARTO version shapefiles to Bytes Production -----------------------------------------------------------
+    #
+    # m_bytes_prod_carto = os.path.join(m_bytes_version_path, 'carto')
+    #
+    # if os.path.isdir(m_bytes_prod_carto):
+    #     print("CARTO directory in BytesProduction already exists. Skipping directory generation step.")
+    # else:
+    #     os.mkdir(m_bytes_prod_carto)
+    #
+    # for f in os.listdir(m_bytes_prod_shape):
+    #     # Copying MapPLUTO Clipped to CARTO Directory
+    #     if "MapPLUTO" in f and "_" not in f and ".zip" not in f:
+    #         print("Copying {} to {}".format(os.path.join(m_bytes_prod_shape, f), os.path.join(m_bytes_prod_carto, f)))
+    #         shutil.copyfile(os.path.join(m_bytes_prod_shape, f),
+    #                              os.path.join(m_bytes_prod_carto, f[:8] + "_{}".format(prod_version) + f[8:]))
+    #         print("{} copied.".format(f))
+    #
+    # for f in os.listdir(m_bytes_prod_carto):
+    #     if '.shp' in f and 'xml' not in f:
+    #         print("Adding spatial index to CARTO version of MapPLUTO data set.")
+    #         arcpy.AddSpatialIndex_management(os.path.join(m_bytes_prod_carto, f))
+    #         print("Spatial index added to CARTO version of MapPLUTO data set.")
+    #         print("Repairing geometry of CARTO version of MapPLUTO data set.")
+    #         arcpy.RepairGeometry_management(os.path.join(m_bytes_prod_carto, f))
+    #         print("Geometry repaired for CARTO version of MapPLUTO data set.")
+    #
+    # carto_zip = zipfile.ZipFile(os.path.join(m_bytes_prod_carto, 'MapPLUTO_{}.zip'.format(prod_version)), 'w')
+    #
+    # for f in os.listdir(m_bytes_prod_carto):
+    #     if ".zip" not in f:
+    #         print("Zipping {}".format(os.path.join(m_bytes_prod_carto, f)))
+    #         carto_zip.write(os.path.join(m_bytes_prod_carto, f), f, compress_type=zipfile.ZIP_DEFLATED)
+    #         print("{} added to zip directory.".format(os.path.join(m_bytes_prod_carto, f)))
+    # carto_zip.close()
 
     '''
     Rename exports to match naming convention for layers. Typically not used.
@@ -602,7 +763,10 @@ try:
     log.write(str(StartTime) + "\t" + str(EndTime) + "\t" + str(EndTime - StartTime) + "\n")
     log.close()
 
+    arcpy.AcceptConnections(sde_prod_env, True)
+
 except:
+    arcpy.AcceptConnections(sde_prod_env, True)
     print "error"
     tb = sys.exc_info()[2]
     tbinfo = traceback.format_tb(tb)[0]
